@@ -1,0 +1,55 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "enabled_providers": [ "owui" ],
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "git *": "ask",
+      "rm *": "ask",
+      "docker *": "deny"
+    },
+    "edit": "allow",
+    "write": "allow"
+  },
+  "compaction": {
+      "auto": false,
+      "prune": false
+  },
+  "model": "owui/vllm/coding",
+  "provider": {
+    "owui": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OWUI",
+      "options": {
+        "baseURL": "{env:OWUI_URL}",
+        "apiKey": "{env:OWUI_TOKEN}"
+      },
+      "models": {
+        "vllm/generic": {
+          "name": "Generic",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "vllm/coding": {
+          "name": "Coder",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Determine container engine (podman or docker)
+CONTAINER_ENGINE=$(which podman 2>/dev/null || which docker 2>/dev/null)
+if [ -z "$CONTAINER_ENGINE" ]; then
+  echo "Error: No container engine (podman/docker) found in PATH" >&2
+  exit 1
+fi
+
+# Detect the number of online/available CPUs across distros and macOS.
+detect_cpus() {
+  local n=""
+  if command -v nproc >/dev/null 2>&1; then
+    n=$(nproc 2>/dev/null)
+  fi
+  if [ -z "$n" ] && command -v getconf >/dev/null 2>&1; then
+    n=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+  fi
+  if [ -z "$n" ] && command -v sysctl >/dev/null 2>&1; then
+    n=$(sysctl -n hw.ncpu 2>/dev/null)
+  fi
+  case "$n" in
+    '' | *[!0-9]*) n="" ;;
+  esac
+  printf '%s' "$n"
+}
+
+# Detect total system memory in MiB.
+detect_mem_mb() {
+  local kb="" bytes=""
+  if [ -r /proc/meminfo ]; then
+    kb=$(awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null)
+    case "$kb" in
+      '' | *[!0-9]*) kb="" ;;
+    esac
+    if [ -n "$kb" ]; then
+      printf '%s' "$((kb / 1024))"
+      return
+    fi
+  fi
+  if command -v sysctl >/dev/null 2>&1; then
+    bytes=$(sysctl -n hw.memsize 2>/dev/null)
+    case "$bytes" in
+      '' | *[!0-9]*) bytes="" ;;
+    esac
+    if [ -n "$bytes" ]; then
+      printf '%s' "$((bytes / 1024 / 1024))"
+      return
+    fi
+  fi
+  printf ''
+}
+
+
+PROJECT=$(basename "$PWD")
+# Sanitize PROJECT to only contain valid Docker name characters (alphanumeric, dots, hyphens, underscores)
+# Replace any invalid characters with underscores, and ensure it starts with alphanumeric
+PROJECT=$(echo "$PROJECT" | LC_ALL=C sed 's/[^a-zA-Z0-9._-]/_/g' | LC_ALL=C sed 's/^[^a-zA-Z0-9]/_/')
+
+if command -v uuidgen >/dev/null 2>&1; then
+  UNIQ=$(uuidgen)
+elif [ -r /proc/sys/kernel/random/uuid ]; then
+  UNIQ=$(cat /proc/sys/kernel/random/uuid)
+else
+  UNIQ="$$-${RANDOM}"
+fi
+NAME="opencode-${PROJECT}-${UNIQ}"
+
+TOTAL_CPUS=$(detect_cpus)
+if [ -z "$TOTAL_CPUS" ]; then
+  CPUS=1
+else
+  CPUS=$((TOTAL_CPUS / 2))
+  [ "$CPUS" -lt 1 ] && CPUS=1
+fi
+
+TOTAL_MEM_MB=$(detect_mem_mb)
+if [ -z "$TOTAL_MEM_MB" ]; then
+  MEM_MB=512
+else
+  MEM_MB=$((TOTAL_MEM_MB / 2))
+  [ "$MEM_MB" -lt 1024 ] && MEM_MB=1024
+fi
+
+DOCKER_ENV=()
+OPENCODE_ARGS=("$@")
+
+HOST_UID=$(id -u)
+HOST_GID=$(id -g)
+
+OWUI_URL=$(pass show env/OWUI_URL)
+OWUI_TOKEN=$(pass show env/OWUI_TOKEN)
+GRAFANA_SERVICE_ACCOUNT_TOKEN=$(pass show env/GRAFANA_SERVICE_ACCOUNT_TOKEN)
+
+exec "$CONTAINER_ENGINE" run --rm --tty --interactive --init \
+  --name "$NAME" \
+  --memory="${MEM_MB}m" \
+  --cpus="$CPUS" \
+  -e HOST_UID="$HOST_UID" \
+  -e HOST_GID="$HOST_GID" \
+  -e OWUI_URL=$OWUI_URL \
+  -e OWUI_TOKEN=$OWUI_TOKEN \
+  -e GRAFANA_SERVICE_ACCOUNT_TOKEN=$GRAFANA_SERVICE_ACCOUNT_TOKEN \
+  ${DOCKER_ENV[@]+"${DOCKER_ENV[@]}"} \
+  -v "$HOME/.local/state/opencode:/home/node/.local/state/opencode" \
+  -v "$HOME/.local/share/opencode:/home/node/.local/share/opencode" \
+  -v "$HOME/.config/opencode:/home/node/.config/opencode:ro" \
+  -v "$HOME/.cache/ms-playwright:/home/node/.cache/ms-playwright" \
+  -v "$PWD:/app:rw" \
+  --tmpfs /app/.venv:uid=1000,gid=1000,exec \
+  --network="host" \
+  opencode "${OPENCODE_ARGS[@]}"
