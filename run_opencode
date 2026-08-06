@@ -109,6 +109,6 @@ exec "$CONTAINER_ENGINE" run --rm --tty --interactive --init \
   -v "$HOME/.config/opencode:/home/node/.config/opencode:ro" \
   -v "$HOME/.cache/ms-playwright:/home/node/.cache/ms-playwright" \
   -v "$PWD:/app:rw" \
+  --add-host host.docker.internal:host-gateway \
   --tmpfs /app/.venv:uid=1000,gid=1000,exec \
-  --network="host" \
   opencode "${OPENCODE_ARGS[@]}"
