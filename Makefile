@@ -32,7 +32,7 @@ install:
 	mkdir -p "$(HOME)/.local/state/opencode" && mkdir -p "$(HOME)/.local/share/opencode"
 	@echo "Add run_opencode to ~/.local/bin"
 	[ -L "$(HOME)/.local/bin/run_opencode" ] || ( chmod +x "$(MAKEFILE_DIR)/run_opencode" && ln -s "$(MAKEFILE_DIR)/run_opencode" ~/.local/bin/run_opencode )
-	mkdir -p "$(HOME)/.config/opencode" && cp "$(MAKEFILE_DIR)/opencode_template.jsonc" "$(HOME)/.config/opencode/opencode_template.jsonc"
+	mkdir -p "$(HOME)/.config/opencode" && cp "$(MAKEFILE_DIR)/opencode_template.jsonc" "$(HOME)/.config/opencode/opencode_template.jsonc" && touch "$(HOME)/.config/opencode/.gitignore"
 
 clean:
 	@echo "Removing container images"
