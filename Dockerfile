@@ -1,4 +1,4 @@
-FROM node:23-slim AS agent-base
+FROM node:24-bookworm-slim AS agent-base
 
 ARG HOST_UID=1000
 ARG HOST_GID=1000
@@ -58,7 +58,7 @@ FROM agent-base AS builder
 
 # We act as 'node' user (inherited from base)
 # Because we set NPM_CONFIG_PREFIX in base, this installs to /home/node/.npm-global
-RUN npm install -g opencode-ai && \
+RUN npm install -g @opencode/cli && \
   echo "Installed Open Code version: $(opencode --version)"
 
 RUN npm install -g @fission-ai/openspec@latest

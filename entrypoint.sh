@@ -87,4 +87,4 @@ elif [ -z "$VENV" ] && { [ -f "pyproject.toml" ] || [ -f "uv.lock" ]; }; then
   echo "NOTE: Python dependencies not synced (UV_SYNC=false). Run 'uv sync' on host or use --sync flag." >&2
 fi
 
-exec opencode "$@"
+exec opencode --standalone "$@"
