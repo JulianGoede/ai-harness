@@ -92,6 +92,8 @@ HOST_GID=$(id -g)
 
 OWUI_URL=$(pass show env/OWUI_URL)
 OWUI_TOKEN=$(pass show env/OWUI_TOKEN)
+# OWUI_URL=$(pass show env/ASKAI_URL)
+# OWUI_TOKEN=$(pass show env/ASKAI_TOKEN)
 GRAFANA_SERVICE_ACCOUNT_TOKEN=$(pass show env/GRAFANA_SERVICE_ACCOUNT_TOKEN)
 
 exec "$CONTAINER_ENGINE" run --rm --tty --interactive --init \
