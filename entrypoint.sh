@@ -24,35 +24,34 @@ if [ "${HOST_UID:-}" ] && [ "${HOST_GID:-}" ]; then
 fi
 
 # ------------------------------------------------------------------
-# Root-only setup: fix ownership and pre-create directories that
-# Docker bind mounts may have created as root-owned intermediates.
-# This runs even when UID matches (no remap needed) while we're root.
+# Root-only setup: fix ownership of sandbox-local paths, start the
+# private Docker daemon, then drop to the node user.
+#
+# Host mounts (project, opencode state/data/config) define their own
+# ownership via run_opencode's uid/gid mount options. Never chown them
+# recursively from here: that would reach into the host filesystem.
 # ------------------------------------------------------------------
 if [ "$(id -u)" = "0" ]; then
-  # Fix ownership of writable paths. Skip read-only mounts like
-  # /home/node/.config/opencode:ro and bind mounts that can't be
-  # chowned from inside the container (e.g. ms-playwright).
-  chown node:node /home/node
-  chown -R node:node /home/node/.cache /home/node/.local /app /tmp /entrypoint.sh || true
+  chown node:node /home/node /tmp /entrypoint.sh || true
+  # The venv is a sandbox-owned directory, not a host mount.
+  [ -e /app/.venv ] && chown node:node /app/.venv || true
 
-  # Pre-create ALL intermediate directories that Docker bind mounts
-  # may create as root-owned. This avoids uv and other tools getting
-  # Permission denied when they try to write under these paths.
-  #
-  # Mounts from run_opencode:
-  #   $HOME/.local/state/opencode  → /home/node/.local/state/opencode
-  #   $HOME/.local/share/opencode  → /home/node/.local/share/opencode
-  #   $HOME/.cache/ms-playwright   → /home/node/.cache/ms-playwright
-  #
-  # uv also uses ~/.local/share/uv/  for Python installations
-  # and  ~/.cache/uv/              for its cache
-  mkdir -p \
-    /home/node/.cache/uv \
-    /home/node/.cache/ms-playwright \
-    /home/node/.local/share/uv \
-    /home/node/.local/share/opencode \
-    /home/node/.local/state/opencode
-  chown -R node:node /home/node/.cache /home/node/.local
+  # Nested dockerd: the agent gets a private daemon inside the microVM.
+  # /var/lib/docker is an owned ext4 disk supplied by run_opencode, so
+  # overlay2 has a real filesystem and its contents are discarded when
+  # the sandbox is removed. The host Docker socket is never mounted.
+  getent group docker >/dev/null 2>&1 || groupadd docker
+  usermod -aG docker node
+  dockerd >/tmp/dockerd.log 2>&1 &
+  for _ in $(seq 1 60); do
+    docker info >/dev/null 2>&1 && break
+    sleep 1
+  done
+  if ! docker info >/dev/null 2>&1; then
+    echo "ERROR: dockerd failed to start." >&2
+    cat /tmp/dockerd.log >&2
+    exit 1
+  fi
 
   # Drop to node user (gosu doesn't set HOME, so export it explicitly)
   HOME=/home/node exec gosu node "$0" "$@"
@@ -75,8 +74,8 @@ for candidate in .venv venv; do
   fi
 done
 
-# If no venv found and UV_SYNC is enabled, auto-create one
-# Note: this writes to the host filesystem — use with care
+# If no venv found and UV_SYNC is enabled, create one in the sandbox-owned
+# /app/.venv (the host project's .venv is hidden by that mount).
 if [ -z "$VENV" ] && [ "$UV_SYNC" = "true" ] && { [ -f "pyproject.toml" ] || [ -f "uv.lock" ]; }; then
   echo "Syncing Python dependencies (UV_SYNC=true)..."
   uv sync

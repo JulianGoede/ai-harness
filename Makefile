@@ -9,7 +9,7 @@ HOST_UID := $(shell id -u)
 HOST_GID := $(shell id -g)
 
 # Tools to install in to the containers with apt-get
-LOCAL_TOOLS := "git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick build-essential python3 python3-pip"
+LOCAL_TOOLS := "git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick build-essential python3 python3-pip docker.io"
 
 
 # Ensure we have a container engine
@@ -29,10 +29,14 @@ opencode:
 
 install:
 	@echo "Create state and share for opencode"
-	mkdir -p "$(HOME)/.local/state/opencode" && mkdir -p "$(HOME)/.local/share/opencode"
+	mkdir -p "$(HOME)/.local/state/opencode" "$(HOME)/.local/share/opencode"
 	@echo "Add run_opencode to ~/.local/bin"
-	[ -L "$(HOME)/.local/bin/run_opencode" ] || ( chmod +x "$(MAKEFILE_DIR)/run_opencode" && ln -s "$(MAKEFILE_DIR)/run_opencode" ~/.local/bin/run_opencode )
-	mkdir -p "$(HOME)/.config/opencode" && cp "$(MAKEFILE_DIR)/opencode_template.jsonc" "$(HOME)/.config/opencode/opencode_template.jsonc" && touch "$(HOME)/.config/opencode/.gitignore"
+	mkdir -p "$(HOME)/.local/bin"
+	chmod +x "$(MAKEFILE_DIR)/run_opencode"
+	ln -sfn "$(MAKEFILE_DIR)/run_opencode" "$(HOME)/.local/bin/run_opencode"
+	mkdir -p "$(HOME)/.config/opencode"
+	cp "$(MAKEFILE_DIR)/opencode_template.jsonc" "$(HOME)/.config/opencode/opencode_template.jsonc"
+	touch "$(HOME)/.config/opencode/.gitignore"
 
 clean:
 	@echo "Removing container images"

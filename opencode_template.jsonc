@@ -18,7 +18,7 @@
     { "action": "shell", "resource": "git remote -v", "effect": "allow" },
     { "action": "shell", "resource": "git stash list *", "effect": "allow" },
     { "action": "shell", "resource": "rm *", "effect": "ask" },
-    { "action": "shell", "resource": "docker *", "effect": "deny" },
+    { "action": "shell", "resource": "docker *", "effect": "allow" },
     { "action": "edit", "resource": "*", "effect": "allow" }
   ],
   "compaction": {
