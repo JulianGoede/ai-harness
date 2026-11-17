@@ -9,7 +9,8 @@ HOST_UID := $(shell id -u)
 HOST_GID := $(shell id -g)
 
 # Tools to install in to the containers with apt-get
-LOCAL_TOOLS := "git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick build-essential python3 python3-pip docker.io"
+# sqlite3 checks and archives a corrupt OpenCode database.
+LOCAL_TOOLS := "git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick build-essential python3 python3-pip sqlite3 docker.io"
 
 
 # Ensure we have a container engine
@@ -28,8 +29,6 @@ opencode:
 		-t opencode .
 
 install:
-	@echo "Create state and share for opencode"
-	mkdir -p "$(HOME)/.local/state/opencode" "$(HOME)/.local/share/opencode"
 	@echo "Add run_opencode to ~/.local/bin"
 	mkdir -p "$(HOME)/.local/bin"
 	chmod +x "$(MAKEFILE_DIR)/run_opencode"

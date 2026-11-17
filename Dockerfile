@@ -3,8 +3,9 @@ FROM node:24-bookworm-slim AS agent-base
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 # Combine all tools here. docker.io provides the docker CLI and dockerd
-# that the entrypoint starts inside the microsandbox VM.
-ARG LOCAL_TOOLS="git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick ca-certificates gnupg procps docker.io"
+# that the entrypoint starts inside the microsandbox VM. sqlite3 checks and
+# archives a corrupt OpenCode database.
+ARG LOCAL_TOOLS="git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick ca-certificates gnupg procps sqlite3 docker.io"
 
 # 1. Install System Dependencies (as root)
 RUN apt-get update && \

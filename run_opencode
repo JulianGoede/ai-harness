@@ -5,22 +5,28 @@ set -euo pipefail
 # Run opencode in a microsandbox (msb) microVM.
 #
 # The image is built by `make` with Docker/podman and imported into msb on
-# first use, or whenever the host image changes. The sandbox is ephemeral:
-# opencode sessions and state persist through host directory mounts.
+# first use, or whenever the host image changes. The sandbox is ephemeral, but
+# each project gets a persistent, block-backed OpenCode volume. The live host
+# database is never mounted into a sandbox.
 #
 # Docker: dockerd is bundled in the image and started by the entrypoint inside
 # the VM. The agent gets its own private daemon; the host Docker socket is
 # never mounted.
 #
 # Optional env overrides:
-#   OPENCODE_IMAGE    host image to import (default: opencode)
-#   MSB_IMAGE         image reference inside msb (default: opencode:local)
-#   MSB_CPUS          vCPUs (default: 4)
-#   MSB_MEM           memory (default: 8G)
-#   MSB_ROOT_DISK     root disk size (default: 16G)
-#   MSB_DOCKER_DISK   private Docker data disk size (default: 20G)
-#   MSB_NET           network profile (default: public)
-#   UV_SYNC           run `uv sync` on start (default: false)
+#   OPENCODE_IMAGE       host image to import (default: opencode)
+#   MSB_IMAGE            image reference inside msb (default: opencode:local)
+#   MSB_CPUS             vCPUs (default: 4)
+#   MSB_MEM              memory (default: 8G)
+#   MSB_ROOT_DISK        root disk size (default: 16G)
+#   MSB_DOCKER_DISK      private Docker data disk size (default: 20G)
+#   MSB_NET              network profile (default: public)
+#   UV_SYNC              run `uv sync` on start (default: false)
+#   OPENCODE_DISK        OpenCode volume size at creation (default: 16G)
+#
+# Guest data path: /home/node/ocdata. Do not use a path containing a dot (for
+# example /home/node/.opencode) for a `kind=disk` mount: msb derives the
+# virtio-blk device id from the guest path and rejects non-portable ids.
 
 # Resolve this script through symlinks so error messages can point at the repo
 # when run_opencode is invoked from ~/.local/bin in any working directory.
@@ -35,6 +41,21 @@ resolve_repo_dir() {
     esac
   done
   cd -P "$(dirname "$src")" && pwd
+}
+
+die() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+sha256_hex() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  else
+    die "sha256sum or shasum is required to derive an instance name."
+  fi
 }
 
 REPO_DIR=$(resolve_repo_dir)
@@ -84,35 +105,90 @@ fi
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 
-mkdir -p \
-  "$HOME/.local/state/opencode" \
-  "$HOME/.local/share/opencode" \
-  "$HOME/.config/opencode"
+PROJECT_DIR=$(pwd -P) || die "Cannot resolve the real working directory."
+case "$PROJECT_DIR" in
+  *:*) die "The project path must not contain ':' (used by --mount-dir): $PROJECT_DIR" ;;
+esac
 
+slug=$(basename "$PROJECT_DIR" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-' |
+  sed 's/^[^A-Za-z0-9]*//; s/[^A-Za-z0-9]*$//' | cut -c1-40)
+[ -n "$slug" ] || slug=project
+hash=$(printf '%s' "$PROJECT_DIR" | sha256_hex | cut -c1-12)
+VOLUME="opencode-data-$slug-$hash"
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+case "$CONFIG_DIR" in
+  *:*) die "The config path must not contain ':' (used by --mount-dir): $CONFIG_DIR" ;;
+esac
+mkdir -p "$CONFIG_DIR"
+
+# Resolve secrets before taking the volume lock. `pass` can start a persistent
+# gpg-agent; doing this first prevents the agent from inheriting the lock fd.
 OWUI_URL=$(pass show env/OWUI_URL)
 OWUI_TOKEN=$(pass show env/OWUI_TOKEN)
 GRAFANA_SERVICE_ACCOUNT_TOKEN=$(pass show env/GRAFANA_SERVICE_ACCOUNT_TOKEN)
 
-# Unnamed `msb run` is ephemeral: the VM is removed when opencode exits.
-# Host mounts keep sessions/state, while the project and venv stay isolated
-# from Docker's container-level paths.
-exec msb run -t \
-  --cpus "$CPUS" \
-  --memory "$MEM" \
-  --root-disk "$ROOT_DISK" \
-  --net "$NET" \
-  -e HOST_UID="$HOST_UID" \
-  -e HOST_GID="$HOST_GID" \
-  -e UV_SYNC="${UV_SYNC:-false}" \
-  -e OWUI_URL="$OWUI_URL" \
-  -e OWUI_TOKEN="$OWUI_TOKEN" \
-  -e GRAFANA_SERVICE_ACCOUNT_TOKEN="$GRAFANA_SERVICE_ACCOUNT_TOKEN" \
-  --mount-dir "$PWD:/app:rw,uid=$HOST_UID,gid=$HOST_GID" \
-  --mount-dir "$HOME/.local/state/opencode:/home/node/.local/state/opencode:uid=$HOST_UID,gid=$HOST_GID" \
-  --mount-dir "$HOME/.local/share/opencode:/home/node/.local/share/opencode:uid=$HOST_UID,gid=$HOST_GID" \
-  --mount-dir "$HOME/.config/opencode:/home/node/.config/opencode:ro,uid=$HOST_UID,gid=$HOST_GID" \
-  --mount-owned "/app/.venv:uid=$HOST_UID,gid=$HOST_GID" \
-  --mount-owned "/var/lib/docker:kind=disk,size=$DOCKER_DISK" \
-  -w /app \
-  "$IMAGE" \
-  -- "$@"
+# Only one kernel may write a volume's SQLite database. Hold this lock for the
+# lifetime of the sandbox. If another run from this directory already holds it,
+# fall back to an ephemeral database instead of creating another volume.
+PERSISTENT=0
+if command -v flock >/dev/null 2>&1; then
+  LOCK_DIR="${MSB_HOME:-$HOME/.microsandbox}/opencode-locks"
+  mkdir -p "$LOCK_DIR"
+  if exec 9>"$LOCK_DIR/$VOLUME.lock" && flock -n 9; then
+    PERSISTENT=1
+  else
+    exec 9>&- || true
+    echo "Warning: OpenCode instance '$VOLUME' is already in use; starting with an ephemeral database (sessions will not persist)." >&2
+  fi
+else
+  echo "Warning: 'flock' not found; starting with an ephemeral database (sessions will not persist)." >&2
+fi
+
+# A sandbox left behind by a killed run can still be writing the volume even
+# though no process holds the lock. Treat that as busy as well.
+if [ "$PERSISTENT" = "1" ] &&
+  [ -n "$(msb ls --running --label "opencode.volume=$VOLUME" -q 2>/dev/null || true)" ]; then
+  PERSISTENT=0
+  exec 9>&- || true
+  echo "Warning: a sandbox is still using OpenCode volume '$VOLUME'; starting with an ephemeral database (sessions will not persist)." >&2
+fi
+
+MSB_ARGS=(
+  -t
+  --cpus "$CPUS"
+  --memory "$MEM"
+  --root-disk "$ROOT_DISK"
+  --net "$NET"
+  -e HOST_UID="$HOST_UID"
+  -e HOST_GID="$HOST_GID"
+  -e UV_SYNC="${UV_SYNC:-false}"
+  -e XDG_DATA_HOME=/home/node/ocdata/data
+  -e XDG_STATE_HOME=/home/node/ocdata/state
+  -e OWUI_URL="$OWUI_URL"
+  -e OWUI_TOKEN="$OWUI_TOKEN"
+  -e GRAFANA_SERVICE_ACCOUNT_TOKEN="$GRAFANA_SERVICE_ACCOUNT_TOKEN"
+)
+
+if [ "$PERSISTENT" = "1" ]; then
+  MSB_ARGS+=(
+    --label "opencode.volume=$VOLUME"
+    --mount-named "$VOLUME:/home/node/ocdata:kind=disk,size=${OPENCODE_DISK:-16G}"
+  )
+fi
+
+MSB_ARGS+=(
+  --mount-dir "$PROJECT_DIR:/app:rw,uid=$HOST_UID,gid=$HOST_GID"
+  --mount-dir "$CONFIG_DIR:/home/node/.config/opencode:ro,uid=$HOST_UID,gid=$HOST_GID"
+  --mount-owned "/app/.venv:uid=$HOST_UID,gid=$HOST_GID"
+  --mount-owned "/var/lib/docker:kind=disk,size=$DOCKER_DISK"
+  -w /app
+  "$IMAGE"
+  --
+  "$@"
+)
+
+# Keep this shell alive so the lock is held until `msb run` exits. With no
+# volume mounted, /home/node/ocdata lives on the sandbox root disk and is
+# discarded when the VM is removed.
+msb run "${MSB_ARGS[@]}"
