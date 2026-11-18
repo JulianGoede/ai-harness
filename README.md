@@ -26,7 +26,7 @@ automatically.
   - `XDG_STATE_HOME=/home/node/ocdata/state`
 - `${XDG_CONFIG_HOME:-$HOME/.config}/opencode` → read-only config
 - `/app/.venv` → sandbox-private uv venv (the host project's `.venv` is hidden)
-- `/var/lib/docker` → sandbox-private Docker data disk
+- `/var/lib/docker` → sandbox-private Docker and containerd data disk
 
 The volume's guest path deliberately contains no dot. msb derives the virtio-blk
 device id from the guest path for `kind=disk` mounts, and rejects device ids
@@ -83,20 +83,22 @@ project's OpenCode database and sessions.
 
 ## Docker
 
-The image bundles `dockerd`. The entrypoint starts a private daemon inside the
-microVM, so the agent can run `docker` commands normally. The host Docker socket
-is never mounted. Docker images/containers/build cache live on an ephemeral 20G
-disk and are wiped with the sandbox.
+The image bundles Docker CE and the Compose plugin from Docker's official
+repository. The entrypoint starts a private daemon inside the microVM, so the
+agent can run `docker` and `docker compose` normally. The host Docker socket is
+never mounted. Docker images, containers, build cache, and containerd snapshots
+live on an ephemeral 20G disk at `/var/lib/docker` and are wiped with the
+sandbox.
 
 ## Resources and overrides
 
-Defaults are 4 vCPUs, 8G memory, a 16G root disk, a 20G Docker data disk, and a
-16G OpenCode volume. Override with:
+Defaults are 4 vCPUs, 8G memory, a 16G root disk, a 20G Docker/containerd data
+disk, and a 16G OpenCode volume. Override with:
 
 - `MSB_CPUS` (default `4`)
 - `MSB_MEM` (default `8G`)
 - `MSB_ROOT_DISK` (default `16G`)
-- `MSB_DOCKER_DISK` (default `20G`)
+- `MSB_DOCKER_DISK` (default `20G`; Docker/containerd data disk)
 - `MSB_NET` (default `public`; set `public,private` if `OWUI_URL` is on a
   private network)
 - `UV_SYNC` (default `false`; set `true` to sync Python dependencies on start)

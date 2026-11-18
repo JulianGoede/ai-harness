@@ -9,8 +9,9 @@ HOST_UID := $(shell id -u)
 HOST_GID := $(shell id -g)
 
 # Tools to install in to the containers with apt-get
-# sqlite3 checks and archives a corrupt OpenCode database.
-LOCAL_TOOLS := "git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick build-essential python3 python3-pip sqlite3 docker.io"
+# sqlite3 checks and archives a corrupt OpenCode database. Docker Engine and
+# Compose are installed separately from Docker's own apt repository.
+LOCAL_TOOLS := "git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick build-essential python3 python3-pip ca-certificates gnupg procps sqlite3"
 
 
 # Ensure we have a container engine
