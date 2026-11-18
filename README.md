@@ -40,6 +40,38 @@ The host OpenCode data and state directories (`~/.local/share/opencode`,
 all sessions in a single SQLite database in WAL mode; sharing that live database
 across separate kernels (host plus sandbox, or two sandboxes) corrupts it.
 
+## Reaching host services (opt-in)
+
+The sandbox cannot reach the host by default. If you ever need to resolve host
+ports from inside the sandbox, opt in for that run:
+
+```sh
+MSB_NET="public,host" run_opencode
+```
+
+Add `private` as well when you also need LAN/private addresses:
+
+```sh
+MSB_NET="public,private,host" run_opencode
+```
+
+Inside the sandbox, address the host as `host.microsandbox.internal`, not
+`127.0.0.1` (guest loopback is the sandbox itself):
+
+```sh
+curl http://host.microsandbox.internal:11434
+```
+
+> **Warning:** this breaks network isolation. The sandbox can reach every
+> TCP/UDP port on the host machine, including services bound to host loopback.
+> Enable it only for the run that needs it; do not export it globally unless you
+> accept that exposure.
+
+This is egress only (sandbox → host). It does not publish sandbox ports to the
+host or share the host network namespace. For inbound traffic, `run_opencode`
+does not pass `-p` today; use `msb modify <sandbox> -p ...` on a running sandbox
+if needed.
+
 ## Parallel runs
 
 Each working directory maps to a stable `opencode-data-<directory>-<hash>`
@@ -100,7 +132,7 @@ disk, and a 16G OpenCode volume. Override with:
 - `MSB_ROOT_DISK` (default `16G`)
 - `MSB_DOCKER_DISK` (default `20G`; Docker/containerd data disk)
 - `MSB_NET` (default `public`; set `public,private` if `OWUI_URL` is on a
-  private network)
+  private network, or add `host` to reach host services — see above)
 - `UV_SYNC` (default `false`; set `true` to sync Python dependencies on start)
 - `OPENCODE_IMAGE` (host image, default `opencode`)
 - `MSB_IMAGE` (msb image reference, default `opencode:local`)
