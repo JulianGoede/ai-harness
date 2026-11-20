@@ -1,34 +1,57 @@
-FROM node:24-bookworm-slim AS agent-base
+FROM node:24-trixie-slim AS agent-base
 
 ARG HOST_UID=1000
 ARG HOST_GID=1000
-# Combine all tools here. Note: added specific tools you listed for runtime
-ARG LOCAL_TOOLS="git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick ca-certificates gnupg procps"
+# Combine all tools here. sqlite3 checks and archives a corrupt OpenCode
+# database. Docker Engine and Compose are installed from Docker's own
+# repository below.
+ARG LOCAL_TOOLS="git curl jq ripgrep vim nano make zip unzip ssh-client wget tree imagemagick ca-certificates gnupg procps sqlite3"
 
 # 1. Install System Dependencies (as root)
-# Include minimal Playwright runtime dependencies for browser compatibility
 RUN apt-get update && \
   apt-get install -y --no-install-recommends ${LOCAL_TOOLS} gosu \
-    # Playwright browser runtime dependencies (minimal set)
-    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-    libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-    libgbm1 libasound2 libpango-1.0-0 libcairo2 \
     xclip xsel wl-clipboard && \
   rm -rf /var/lib/apt/lists/*
 
-# 2. Create node user with requested UID/GID (default 1000:1000)
+# 2. Install Docker Engine, the Compose plugin, and Buildx from Docker's
+#    official Debian repository. The entrypoint starts this daemon inside the
+#    microsandbox; the host Docker socket is never mounted.
+RUN set -eux; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends ca-certificates curl; \
+  install -m 0755 -d /etc/apt/keyrings; \
+  curl -fsSL https://download.docker.com/linux/debian/gpg \
+    -o /etc/apt/keyrings/docker.asc; \
+  chmod a+r /etc/apt/keyrings/docker.asc; \
+  . /etc/os-release; \
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+    > /etc/apt/sources.list.d/docker.list; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends \
+    docker-ce \
+    docker-ce-cli \
+    containerd.io \
+    docker-compose-plugin \
+    docker-buildx-plugin \
+    xz-utils; \
+  rm -rf /var/lib/apt/lists/*; \
+  docker --version; \
+  docker compose version; \
+  dockerd --version
+
+# 3. Create node user with requested UID/GID (default 1000:1000)
 RUN groupmod -g "${HOST_GID}" node && \
   usermod -u "${HOST_UID}" -g "${HOST_GID}" node && \
   chown -R node:node /home/node
 
-# 3. Set up working directory owned by node
+# 4. Set up working directory owned by node
 WORKDIR /app
 RUN chown -R node:node /app
 
-# 4. Switch to 'node' user for config setup
+# 5. Switch to 'node' user for config setup
 USER node
 
-# 5. Configure NPM global location for the 'node' user
+# 6. Configure NPM global location for the 'node' user
 # This allows npm install -g without root permissions
 ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
 ENV PATH=$NPM_CONFIG_PREFIX/bin:$PATH
@@ -38,13 +61,8 @@ RUN mkdir -p /home/node/.npm-global && \
   mkdir -p /home/node/.local && \
   mkdir -p /home/node/.cache
 
-# 6. Install pnpm and playwright-mcp server (pinned version)
-# Version is the source of truth; host browsers must match this version
-ARG PLAYWRIGHT_MCP_VERSION=0.0.75
-RUN npm install -g pnpm@latest-11 @playwright/mcp@${PLAYWRIGHT_MCP_VERSION}
-
-# 7. Set Playwright browsers path to use host-mounted cache
-ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+# 7. Install pnpm
+RUN npm install -g pnpm@latest-11
 
 # 8. Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -86,5 +104,5 @@ RUN echo "" && \
 # Ensure HOME is always /home/node regardless of how we drop privileges
 ENV HOME=/home/node
 
-# Entrypoint runs as root to remap UID, then drops to node user
+# Entrypoint runs as root to boot the private dockerd, then drops to node
 ENTRYPOINT ["/entrypoint.sh"]
